@@ -1,8 +1,10 @@
 import logging
 import sqlite3
 import os
+import random
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import Optional, List, Dict
 from dotenv import load_dotenv
 
 from telegram import Update, ChatPermissions
@@ -36,8 +38,38 @@ WARNINGS_BEFORE_BAN = int(os.getenv('WARNINGS_BEFORE_BAN', 3))
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в .env файле!")
 
+# ============= RP СИСТЕМА =============
+# Словарь для хранения состояний RP-взаимодействий
+rp_states: Dict[int, Dict] = {}
 
-# Декоратор для проверки прав администратора
+# Хранилище для временных блокировок RP-команд (anti-spam)
+rp_cooldown: Dict[int, datetime] = {}
+
+# Реакции для RP-команд
+RP_REACTIONS = {
+    'hug': ['обнял(а)', 'прижал(а) к себе', 'нежно обнял(а)', 'крепко обнял(а)'],
+    'kiss': ['поцеловал(а)', 'нежно поцеловал(а)', 'чмокнул(а) в щечку', 'страстно поцеловал(а)'],
+    'slap': ['дал(а) пощёчину', 'шлёпнул(а)', 'врезал(а) по лицу', 'дал(а) леща'],
+    'pat': ['погладил(а) по голове', 'потрепал(а) по волосам', 'нежно погладил(а)'],
+    'bite': ['укусил(а)', 'легко укусил(а) за плечо', 'куснул(а) за ухо'],
+    'cuddle': ['прижал(а) к себе', 'обнял(а) и прижал(а)', 'заключил(а) в объятия'],
+    'tickle': ['пощекотал(а)', 'начал(а) щекотать', 'нежно пощекотал(а)'],
+    'punch': ['ударил(а)', 'заехал(а) по морде', 'врезал(а) кулаком'],
+    'kick': ['пнул(а)', 'дал(а) пинка', 'ударил(а) ногой'],
+    'headpat': ['погладил(а) по голове', 'потрепал(а) по макушке', 'похлопал(а) по плечу'],
+    'boop': ['ткнул(а) в нос', 'чмокнул(а) в носик', 'нежно коснулся(лась) носа'],
+    'lick': ['облизал(а)', 'провёл(а) языком по', 'лизнул(а)'],
+    'whisper': ['прошептал(а) на ухо', 'тихо сказал(а)', 'шепнул(а)'],
+    'dance': ['пригласил(а) на танец', 'закружил(а) в танце', 'станцевал(а) с'],
+    'sing': ['спел(а) для', 'исполнил(а) песню для', 'запел(а) для'],
+    'cry': ['плачет на плече у', 'всхлипывает у', 'роняет слёзы перед'],
+    'laugh': ['смеётся над', 'хохочет с', 'улыбается и смеётся с'],
+    'blush': ['заливается краской перед', 'краснеет, глядя на', 'стыдливо улыбается'],
+    'stare': ['пристально смотрит на', 'не сводит глаз с', 'вглядывается в'],
+    'wave': ['машет рукой', 'приветственно машет', 'машет в ответ'],
+}
+
+# ============= ДЕКОРАТОРЫ =============
 def admin_only(func):
     @wraps(func)
     async def wrapped(update, context, *args, **kwargs):
@@ -46,11 +78,9 @@ def admin_only(func):
             await update.message.reply_text("❌ У вас нет прав для этой команды!")
             return
         return await func(update, context, *args, **kwargs)
-
     return wrapped
 
-
-# Инициализация базы данных
+# ============= БАЗА ДАННЫХ =============
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -81,7 +111,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Функции для работы с БД
 def add_warning(user_id, chat_id, reason, warned_by):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -97,7 +126,6 @@ def add_warning(user_id, chat_id, reason, warned_by):
     conn.close()
     return warning_count
 
-
 def get_warnings(user_id, chat_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -108,7 +136,6 @@ def get_warnings(user_id, chat_id):
     conn.close()
     return warnings
 
-
 def clear_warnings(user_id, chat_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -118,7 +145,6 @@ def clear_warnings(user_id, chat_id):
     )
     conn.commit()
     conn.close()
-
 
 def get_chat_setting(chat_id, setting):
     conn = sqlite3.connect(DB_NAME)
@@ -131,7 +157,6 @@ def get_chat_setting(chat_id, setting):
     conn.close()
     return result[0] if result else None
 
-
 def set_chat_setting(chat_id, setting, value):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -142,28 +167,36 @@ def set_chat_setting(chat_id, setting, value):
     conn.commit()
     conn.close()
 
-
-# Команды бота
+# ============= КОМАНДЫ МОДЕРАЦИИ =============
 async def start(update: Update, context: CallbackContext):
     """Приветственное сообщение"""
     await update.message.reply_text(
-        "🌟 *Привет! Я Rubin Bot*\n\n"
-        "Я помогаю модерировать чаты и защищать от спама.\n\n"
-        "*Доступные команды:*\n"
+        "🌟 *Привет! Я Celestine Bot*\n\n"
+        "Я помогаю модерировать чаты и защищать от спама, "
+        "а также создавать уютную атмосферу с RP-командами!\n\n"
+        "*Доступные команды:*\n\n"
+        "*📊 Модерация:*\n"
         "/warn @user [причина] - Выдать предупреждение\n"
         "/warnings @user - Показать предупреждения\n"
         "/clearwarns @user - Очистить предупреждения\n"
         "/kick @user - Кикнуть пользователя\n"
-        "/ban @user - Забанить пользователя\n"
+        "/ban @user [причина] - Забанить пользователя\n"
         "/unban @user - Разбанить пользователя\n"
         "/mute @user [минуты] - Замутить пользователя\n"
-        "/unmute @user - Размутить\n"
+        "/unmute @user - Размутить\n\n"
+        "*⚙️ Настройки:*\n"
         "/settings - Настройки бота\n"
         "/stats - Статистика чата\n\n"
+        "*🎭 RP-команды (ролевые игры):*\n"
+        "/rphelp - Все RP-команды\n"
+        "/hug @user - Обнять\n"
+        "/kiss @user - Поцеловать\n"
+        "/slap @user - Дать пощёчину\n"
+        "/cuddle @user - Прижать к себе\n"
+        "/randomrp - Случайное действие\n\n"
         "*Anti-flood:* автоматически предупреждает за частые сообщения",
         parse_mode='Markdown'
     )
-
 
 @admin_only
 async def warn(update: Update, context: CallbackContext):
@@ -212,10 +245,9 @@ async def warn(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def warnings(update: Update, context: CallbackContext):
-    """Показать предупреждения пользователя (только для админов)"""
+    """Показать предупреждения пользователя"""
     if not context.args:
         await update.message.reply_text("❌ Использование: /warnings @user")
         return
@@ -242,7 +274,6 @@ async def warnings(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def clear_warns(update: Update, context: CallbackContext):
     """Очистить предупреждения пользователя"""
@@ -263,7 +294,6 @@ async def clear_warns(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def kick(update: Update, context: CallbackContext):
     """Кикнуть пользователя"""
@@ -282,7 +312,6 @@ async def kick(update: Update, context: CallbackContext):
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
 
 @admin_only
 async def ban(update: Update, context: CallbackContext):
@@ -306,7 +335,6 @@ async def ban(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def unban(update: Update, context: CallbackContext):
     """Разбанить пользователя"""
@@ -324,7 +352,6 @@ async def unban(update: Update, context: CallbackContext):
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
 
 @admin_only
 async def mute(update: Update, context: CallbackContext):
@@ -357,7 +384,6 @@ async def mute(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def unmute(update: Update, context: CallbackContext):
     """Размутить пользователя"""
@@ -388,7 +414,6 @@ async def unmute(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-
 @admin_only
 async def settings(update: Update, context: CallbackContext):
     """Показать настройки бота"""
@@ -401,7 +426,6 @@ async def settings(update: Update, context: CallbackContext):
         parse_mode='Markdown'
     )
 
-
 @admin_only
 async def set_welcome(update: Update, context: CallbackContext):
     """Включить/выключить приветствия"""
@@ -413,7 +437,6 @@ async def set_welcome(update: Update, context: CallbackContext):
     set_chat_setting(update.effective_chat.id, 'welcome_enabled', value)
     await update.message.reply_text(f"✅ Приветствия {'включены' if value else 'выключены'}")
 
-
 @admin_only
 async def set_antiflood(update: Update, context: CallbackContext):
     """Включить/выключить антифлуд"""
@@ -424,7 +447,6 @@ async def set_antiflood(update: Update, context: CallbackContext):
     value = 1 if context.args[0].lower() == 'on' else 0
     set_chat_setting(update.effective_chat.id, 'anti_flood_enabled', value)
     await update.message.reply_text(f"✅ Антифлуд {'включен' if value else 'выключен'}")
-
 
 @admin_only
 async def set_flood(update: Update, context: CallbackContext):
@@ -448,7 +470,6 @@ async def set_flood(update: Update, context: CallbackContext):
     except ValueError:
         await update.message.reply_text("❌ Введите числа!")
 
-
 async def stats(update: Update, context: CallbackContext):
     """Статистика чата"""
     chat_member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
@@ -469,127 +490,300 @@ async def stats(update: Update, context: CallbackContext):
         parse_mode='Markdown'
     )
 
-
-# Обработчик новых участников
-async def welcome_new_members(update: Update, context: CallbackContext):
-    """Приветствие новых участников"""
-    # Проверяем, включены ли приветствия
-    welcome_enabled = get_chat_setting(update.effective_chat.id, 'welcome_enabled')
-    if welcome_enabled == 0:
-        return
-    
-    for new_member in update.message.new_chat_members:
-        if new_member.id == context.bot.id:
-            continue
-        
-        welcome_text = (
-            f"🌟 Добро пожаловать в {update.effective_chat.title}, {new_member.first_name}! 🌟\n\n"
-            f"Пожалуйста, ознакомься с правилами чата и будь вежлив с другими участниками.\n"
-            f"Приятного общения! 💫"
-        )
-        
-        await update.message.reply_text(welcome_text)
-
-
-# Anti-flood система
-user_messages = {}
-
-async def anti_flood(update: Update, context: CallbackContext):
-    """Защита от флуда"""
-    if not update.message or not update.effective_user:
-        return
-    
-    # Проверяем, включен ли антифлуд
-    anti_flood_enabled = get_chat_setting(update.effective_chat.id, 'anti_flood_enabled')
-    if anti_flood_enabled == 0:
-        return
-    
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    current_time = datetime.now()
-    
-    # Проверяем, не админ ли пользователь
-    try:
-        chat_member = await context.bot.get_chat_member(chat_id, user_id)
-        if chat_member.status in ['administrator', 'creator']:
-            return
-    except:
-        pass
-    
-    # Получаем настройки антифлуда
-    flood_limit = get_chat_setting(chat_id, 'flood_limit') or FLOOD_LIMIT
-    flood_time = get_chat_setting(chat_id, 'flood_time') or FLOOD_TIME
-    
-    if user_id not in user_messages:
-        user_messages[user_id] = []
-    
-    # Очищаем старые сообщения
-    user_messages[user_id] = [
-        msg_time for msg_time in user_messages[user_id]
-        if (current_time - msg_time).seconds < flood_time
-    ]
-    
-    user_messages[user_id].append(current_time)
-    
-    # Если превышен лимит - предупреждение
-    if len(user_messages[user_id]) > flood_limit:
-        warning_count = add_warning(
-            user_id,
-            chat_id,
-            "Флуд (автоматическое предупреждение)",
-            context.bot.id
-        )
-        
-        await update.message.delete()
+# ============= RP-КОМАНДЫ =============
+async def rp_action(update: Update, context: CallbackContext, action: str):
+    """Базовый обработчик RP-действий"""
+    if not context.args:
         await update.message.reply_text(
-            f"⚠️ {update.effective_user.first_name}, пожалуйста, не флудите!\n"
-            f"Предупреждение #{warning_count}"
+            f"❌ Использование: /{action} @user [текст]"
+        )
+        return
+    
+    # Проверка на спам
+    user_id = update.effective_user.id
+    if user_id in rp_cooldown:
+        time_diff = (datetime.now() - rp_cooldown[user_id]).seconds
+        if time_diff < 3:
+            await update.message.reply_text("⏳ Подождите немного перед следующим RP-действием!")
+            return
+    
+    try:
+        # Получаем целевого пользователя
+        target_text = context.args[0]
+        target_user = None
+        
+        if target_text.startswith('@'):
+            username = target_text[1:]
+            # Ищем пользователя в чате
+            async for member in context.bot.get_chat_administrators(update.effective_chat.id):
+                if member.user.username and member.user.username.lower() == username.lower():
+                    target_user = member.user
+                    break
+            if not target_user:
+                try:
+                    target_user = await context.bot.get_chat_member(
+                        update.effective_chat.id,
+                        target_text
+                    )
+                    target_user = target_user.user
+                except:
+                    pass
+        elif target_text.isdigit():
+            try:
+                target_user = await context.bot.get_chat_member(
+                    update.effective_chat.id,
+                    int(target_text)
+                )
+                target_user = target_user.user
+            except:
+                pass
+        
+        # Проверяем, найден ли пользователь
+        if not target_user:
+            await update.message.reply_text("❌ Пользователь не найден!")
+            return
+        
+        # Проверка на самого себя
+        if target_user.id == update.effective_user.id:
+            await update.message.reply_text("😅 Нельзя сделать это с самим собой!")
+            return
+        
+        # Проверка на бота
+        if target_user.id == context.bot.id:
+            responses = [
+                f"*{update.effective_user.first_name} пытается {action} меня!* 😅",
+                f"*{update.effective_user.first_name} хочет {action} бота!* 🤖",
+                f"*{update.effective_user.first_name} {action} бота!* 🌟"
+            ]
+            await update.message.reply_text(
+                random.choice(responses),
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Получаем дополнительные параметры
+        extra_text = " ".join(context.args[1:]) if len(context.args) > 1 else ""
+        
+        # Выбираем случайную реакцию
+        if action in RP_REACTIONS:
+            reaction = random.choice(RP_REACTIONS[action])
+        else:
+            reaction = f"{action}(ет/ит)"
+        
+        # Формируем ответ
+        response = f"*{update.effective_user.first_name}* {reaction} *{target_user.first_name}*"
+        if extra_text:
+            response += f"\n📝 *Детали:* {extra_text}"
+        
+        # Добавляем эмодзи
+        emojis = {
+            'hug': ['🤗', '💕', '🥰'],
+            'kiss': ['💋', '😘', '💖'],
+            'slap': ['😤', '👋', '💢'],
+            'pat': ['👋', '💫', '✨'],
+            'bite': ['🦷', '😈', '💢'],
+            'cuddle': ['🤗', '💞', '💕'],
+            'tickle': ['😂', '😆', '🪶'],
+            'punch': ['💥', '👊', '💢'],
+            'kick': ['🦵', '💥', '😤'],
+            'headpat': ['👋', '✨', '💫'],
+            'boop': ['👆', '😊', '💕'],
+            'lick': ['😋', '👅', '💕'],
+            'whisper': ['🤫', '💬', '🌙'],
+            'dance': ['💃', '🕺', '🎵'],
+            'sing': ['🎤', '🎵', '🎶'],
+            'cry': ['😢', '💧', '🥺'],
+            'laugh': ['😂', '🤣', '😄'],
+            'blush': ['😊', '🥰', '💕'],
+            'stare': ['👀', '😳', '💫'],
+            'wave': ['👋', '😊', '✨'],
+        }
+        
+        if action in emojis:
+            response += f" {random.choice(emojis[action])}"
+        
+        bot_name = context.bot.username or "Celestine"
+        
+        await update.message.reply_text(
+            f"*{bot_name}* 📖\n\n{response}",
+            parse_mode='Markdown'
         )
         
-        # Бан за N предупреждений от антифлуда
-        if warning_count >= WARNINGS_BEFORE_BAN:
-            await context.bot.ban_chat_member(chat_id, user_id)
-            await update.message.reply_text(f"🔨 {update.effective_user.first_name} забанен за флуд!")
+        rp_cooldown[user_id] = datetime.now()
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+# RP-команды с пользователем
+async def hug(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'hug')
 
-def main():
-    """Запуск бота"""
-    # Инициализируем БД
-    init_db()
-    
-    # Создаем приложение
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Регистрируем команды
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("warn", warn))
-    application.add_handler(CommandHandler("warnings", warnings))
-    application.add_handler(CommandHandler("clearwarns", clear_warns))
-    application.add_handler(CommandHandler("kick", kick))
-    application.add_handler(CommandHandler("ban", ban))
-    application.add_handler(CommandHandler("unban", unban))
-    application.add_handler(CommandHandler("mute", mute))
-    application.add_handler(CommandHandler("unmute", unmute))
-    application.add_handler(CommandHandler("settings", settings))
-    application.add_handler(CommandHandler("set_welcome", set_welcome))
-    application.add_handler(CommandHandler("set_antiflood", set_antiflood))
-    application.add_handler(CommandHandler("set_flood", set_flood))
-    application.add_handler(CommandHandler("stats", stats))
-    
-    # Регистрируем обработчики сообщений
-    application.add_handler(MessageHandler(
-        filters.StatusUpdate.NEW_CHAT_MEMBERS,
-        welcome_new_members
-    ))
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        anti_flood
-    ))
-    
-    # Запускаем бота
-    print("🤖 Бот Celestine запущен!")
-    application.run_polling()
+async def kiss(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'kiss')
 
+async def slap(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'slap')
 
-if __name__ == '__main__':
-    main()
+async def pat(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'pat')
+
+async def bite(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'bite')
+
+async def cuddle(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'cuddle')
+
+async def tickle(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'tickle')
+
+async def punch(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'punch')
+
+async def kick_rp(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'kick')
+
+async def headpat(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'headpat')
+
+async def boop(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'boop')
+
+async def lick(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'lick')
+
+async def whisper(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'whisper')
+
+async def dance(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'dance')
+
+async def sing(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'sing')
+
+async def cry(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'cry')
+
+async def laugh(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'laugh')
+
+async def blush(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'blush')
+
+async def stare(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'stare')
+
+async def wave(update: Update, context: CallbackContext):
+    await rp_action(update, context, 'wave')
+
+# RP-команды без пользователя (для себя)
+async def rp_self_action(update: Update, context: CallbackContext, action: str):
+    """Действие над собой"""
+    user_name = update.effective_user.first_name
+    
+    responses = {
+        'cry': [f"*{user_name}* плачет... 😢", f"*{user_name}* грустит... 💧", f"*{user_name}* печален(на)... 🥺"],
+        'laugh': [f"*{user_name}* смеётся! 😂", f"*{user_name}* хохочет! 🤣", f"*{user_name}* веселится! 😄"],
+        'blush': [f"*{user_name}* краснеет... 😊", f"*{user_name}* смущается... 🥰", f"*{user_name}* заливается краской... 💕"],
+        'dance': [f"*{user_name}* танцует! 💃", f"*{user_name}* зажигает на танцполе! 🕺", f"*{user_name}* двигается в ритме! 🎵"],
+        'sing': [f"*{user_name}* поёт! 🎤", f"*{user_name}* исполняет песню! 🎵", f"*{user_name}* напевает мелодию! 🎶"],
+        'cuddle': [f"*{user_name}* обнимает себя... 🤗", f"*{user_name}* ищет утешения в объятиях... 💕"],
+        'stare': [f"*{user_name}* смотрит вдаль... 👀", f"*{user_name}* мечтательно смотрит... 💫"],
+        'whisper': [f"*{user_name}* шепчет что-то себе... 🤫", f"*{user_name}* тихо разговаривает... 🌙"],
+    }
+    
+    if action in responses:
+        response = random.choice(responses[action])
+    else:
+        response = f"*{user_name}* {action}(ет/ит) над собой"
+    
+    bot_name = context.bot.username or "Celestine"
+    await update.message.reply_text(
+        f"*{bot_name}* 📖\n\n{response}",
+        parse_mode='Markdown'
+    )
+
+async def cry_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'cry')
+
+async def laugh_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'laugh')
+
+async def dance_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'dance')
+
+async def sing_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'sing')
+
+async def cuddle_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'cuddle')
+
+async def blush_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'blush')
+
+async def stare_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'stare')
+
+async def whisper_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'whisper')
+
+async def hug_self(update: Update, context: CallbackContext):
+    await rp_self_action(update, context, 'cuddle')
+
+# Дополнительные RP-команды
+async def random_rp(update: Update, context: CallbackContext):
+    """Случайное RP-действие"""
+    actions = list(RP_REACTIONS.keys())
+    action = random.choice(actions)
+    
+    if context.args:
+        await rp_action(update, context, action)
+    else:
+        await rp_self_action(update, context, action)
+
+async def rp_help(update: Update, context: CallbackContext):
+    """Показать все RP-команды"""
+    help_text = """
+🌟 *Доступные RP-команды:*
+
+*Основные RP-команды (использование: /команда @пользователь):*
+
+🤗 *Обнимашки*
+/hug @user - Обнять
+/cuddle @user - Прижать к себе
+
+💕 *Нежность*
+/kiss @user - Поцеловать
+/boop @user - Ткнуть в нос
+/headpat @user - Погладить по голове
+/pat @user - Погладить
+
+😈 *Шалости*
+/bite @user - Укусить
+/tickle @user - Пощекотать
+/lick @user - Лизнуть
+/slap @user - Дать пощёчину
+
+💥 *Боевые*
+/punch @user - Ударить
+/kick @user - Пнуть
+
+🎭 *Эмоции*
+/cry @user - Плакать на плече
+/laugh @user - Смеяться с
+/blush @user - Краснеть перед
+/stare @user - Смотреть на
+
+🎵 *Развлечения*
+/dance @user - Пригласить на танец
+/sing @user - Спеть для
+/whisper @user - Прошептать на ухо
+
+👋 *Другое*
+/wave @user - Помахать
+
+*Для себя (без @user):*
+/cry - Поплакать
+/laugh - Посмеяться
+/dance - Потанцевать
+/sing - Попеть
+/cuddle - Обнять себя
