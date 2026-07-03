@@ -147,7 +147,7 @@ def set_chat_setting(chat_id, setting, value):
 async def start(update: Update, context: CallbackContext):
     """Приветственное сообщение"""
     await update.message.reply_text(
-        "🌟 *Привет! Я Celestine Bot*\n\n"
+        "🌟 *Привет! Я Rubin Bot*\n\n"
         "Я помогаю модерировать чаты и защищать от спама.\n\n"
         "*Доступные команды:*\n"
         "/warn @user [причина] - Выдать предупреждение\n"
