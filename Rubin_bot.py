@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация из .env
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]
+SUPER_ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]
 DB_NAME = os.getenv('DB_NAME', 'celestine_bot.db')
 FLOOD_LIMIT = int(os.getenv('FLOOD_LIMIT', 5))
 FLOOD_TIME = int(os.getenv('FLOOD_TIME', 10))
