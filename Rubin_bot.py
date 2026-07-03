@@ -25,6 +25,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация из .env
+print("=" * 50)
+print("ОТЛАДОЧНАЯ ИНФОРМАЦИЯ:")
+print(f"BOT_TOKEN: {BOT_TOKEN[:10]}... (скрыто)")
+print(f"ADMIN_IDS из .env: {os.getenv('ADMIN_IDS')}")
+print(f"ADMIN_IDS (список): {ADMIN_IDS}")
+print(f"Тип ADMIN_IDS: {type(ADMIN_IDS)}")
+print("=" * 50)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]
 DB_NAME = os.getenv('DB_NAME', 'celestine_bot.db')
