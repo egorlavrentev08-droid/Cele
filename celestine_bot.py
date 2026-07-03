@@ -68,19 +68,18 @@ def init_db():
     ''')
     
     # Таблица для настроек чата
-    cursor.execute('''
+    cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS chat_settings (
             chat_id INTEGER PRIMARY KEY,
             welcome_enabled INTEGER DEFAULT 1,
             anti_flood_enabled INTEGER DEFAULT 1,
-            flood_limit INTEGER DEFAULT ?,
-            flood_time INTEGER DEFAULT ?
+            flood_limit INTEGER DEFAULT {FLOOD_LIMIT},
+            flood_time INTEGER DEFAULT {FLOOD_TIME}
         )
-    ''', (FLOOD_LIMIT, FLOOD_TIME))
+    ''')
     
     conn.commit()
     conn.close()
-
 
 # Функции для работы с БД
 def add_warning(user_id, chat_id, reason, warned_by):
