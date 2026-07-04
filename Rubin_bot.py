@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 # Конфигурация
 BOT_TOKEN = "8796023969:AAH_mXDm-I4N_LDc5zgZ_vNzKisY2j-67eg"  # Замените на токен вашего бота
 ADMIN_IDS = [7930591505]  # ID администраторов
-# ID администраторов (через запятую)
-ADMIN_IDS=7930591505
+ADMIN_USER = [@zaddira]
 
 # Декоратор для проверки прав администратора
 def admin_only(func):
