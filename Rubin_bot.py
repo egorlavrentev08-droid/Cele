@@ -1,9 +1,7 @@
 import logging
 import sqlite3
-import os
 from datetime import datetime, timedelta
 from functools import wraps
-from dotenv import load_dotenv
 
 from telegram import Update, ChatPermissions
 from telegram.ext import (
@@ -14,9 +12,6 @@ from telegram.ext import (
     filters,
 )
 
-# Загрузка переменных окружения
-load_dotenv()
-
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -24,128 +19,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация из .env
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_IDS = [int(id.strip()) for id in ADMIN_IDS split(',') if id.strip()]
-DB_NAME = os.getenv('DB_NAME', 'celestine_bot.db')
-FLOOD_LIMIT = int(os.getenv('FLOOD_LIMIT', 5))
-FLOOD_TIME = int(os.getenv('FLOOD_TIME', 10))
-WARNINGS_BEFORE_BAN = int(os.getenv('WARNINGS_BEFORE_BAN', 3))
-
-# Проверка наличия токена
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден в .env файле!")
-
-# Выводим ID админов для отладки
-logger.info(f"ADMIN_IDS загружены: {ADMIN_IDS}")
+# Конфигурация
+BOT_TOKEN = "8796023969:AAH_mXDm-I4N_LDc5zgZ_vNzKisY2j-67eg"  # Замените на токен вашего бота
+ADMIN_IDS = [7930591505]  # ID администраторов
 
 
-# ============= ИСПРАВЛЕННЫЙ ДЕКОРАТОР =============
+# Декоратор для проверки прав администратора
 def admin_only(func):
     @wraps(func)
-    async def wrapped(update: Update, context: CallbackContext, *args, **kwargs):
+    async def wrapped(update, context, *args, **kwargs):
         user_id = update.effective_user.id
-        
-        # Проверяем, есть ли пользователь в ADMIN_IDS
-        if user_id in ADMIN_IDS:
-            return await func(update, context, *args, **kwargs)
-        
-        # Если нет, проверяем в чате
-        try:
-            chat_member = await context.bot.get_chat_member(
-                update.effective_chat.id,
-                user_id
-            )
-            
-            if chat_member.status in ['administrator', 'creator']:
-                return await func(update, context, *args, **kwargs)
-            else:
-                await update.message.reply_text(
-                    "❌ У вас нет прав для этой команды!\n"
-                    "Требуются права администратора."
-                )
-                return
-                
-        except Exception as e:
-            logger.error(f"Ошибка проверки прав: {e}")
-            await update.message.reply_text(
-                "❌ Не удалось проверить ваши права.\n"
-                f"Ошибка: {str(e)}"
-            )
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав для этой команды!")
             return
-    
+        return await func(update, context, *args, **kwargs)
+
     return wrapped
 
 
-# ============= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОИСКА ПОЛЬЗОВАТЕЛЯ =============
-async def get_user_from_text(update: Update, context: CallbackContext, user_text: str):
-    """Получить пользователя по тексту (@username, ID или имя)"""
-    try:
-        # Если это @username
-        if user_text.startswith('@'):
-            username = user_text[1:]
-            try:
-                # Пробуем получить напрямую
-                chat_member = await context.bot.get_chat_member(
-                    update.effective_chat.id,
-                    user_text
-                )
-                return chat_member.user
-            except:
-                # Ищем среди участников чата
-                try:
-                    # Получаем список администраторов
-                    admins = await context.bot.get_chat_administrators(update.effective_chat.id)
-                    for admin in admins:
-                        if admin.user.username and admin.user.username.lower() == username.lower():
-                            return admin.user
-                except:
-                    pass
-                
-                # Если не нашли, пробуем поискать по имени
-                try:
-                    # Получаем последние сообщения для поиска (только для маленьких чатов)
-                    # В противном случае используем другой метод
-                    pass
-                except:
-                    pass
-                
-                return None
-        
-        # Если это ID
-        elif user_text.isdigit():
-            try:
-                chat_member = await context.bot.get_chat_member(
-                    update.effective_chat.id,
-                    int(user_text)
-                )
-                return chat_member.user
-            except:
-                return None
-        
-        # Если это просто имя (пробуем найти среди администраторов)
-        else:
-            try:
-                admins = await context.bot.get_chat_administrators(update.effective_chat.id)
-                for admin in admins:
-                    if admin.user.first_name and admin.user.first_name.lower() == user_text.lower():
-                        return admin.user
-                    if admin.user.last_name and admin.user.last_name.lower() == user_text.lower():
-                        return admin.user
-            except:
-                pass
-            return None
-            
-    except Exception as e:
-        logger.error(f"Ошибка поиска пользователя: {e}")
-        return None
-
-
-# ============= БАЗА ДАННЫХ =============
+# Инициализация базы данных
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('celestine_bot.db')
     cursor = conn.cursor()
     
+    # Таблица для предупреждений
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS warnings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,13 +54,14 @@ def init_db():
         )
     ''')
     
-    cursor.execute(f'''
+    # Таблица для настроек чата
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_settings (
             chat_id INTEGER PRIMARY KEY,
             welcome_enabled INTEGER DEFAULT 1,
             anti_flood_enabled INTEGER DEFAULT 1,
-            flood_limit INTEGER DEFAULT {FLOOD_LIMIT},
-            flood_time INTEGER DEFAULT {FLOOD_TIME}
+            flood_limit INTEGER DEFAULT 5,
+            flood_time INTEGER DEFAULT 10
         )
     ''')
     
@@ -171,8 +69,9 @@ def init_db():
     conn.close()
 
 
+# Функции для работы с БД
 def add_warning(user_id, chat_id, reason, warned_by):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('celestine_bot.db')
     cursor = conn.cursor()
     cursor.execute(
         'INSERT INTO warnings (user_id, chat_id, reason, date, warned_by) VALUES (?, ?, ?, ?, ?)',
@@ -188,7 +87,7 @@ def add_warning(user_id, chat_id, reason, warned_by):
 
 
 def get_warnings(user_id, chat_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('celestine_bot.db')
     cursor = conn.cursor()
     warnings = cursor.execute(
         'SELECT reason, date, warned_by FROM warnings WHERE user_id = ? AND chat_id = ?',
@@ -199,7 +98,7 @@ def get_warnings(user_id, chat_id):
 
 
 def clear_warnings(user_id, chat_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('celestine_bot.db')
     cursor = conn.cursor()
     cursor.execute(
         'DELETE FROM warnings WHERE user_id = ? AND chat_id = ?',
@@ -209,40 +108,11 @@ def clear_warnings(user_id, chat_id):
     conn.close()
 
 
-def get_chat_setting(chat_id, setting):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(
-        f'SELECT {setting} FROM chat_settings WHERE chat_id = ?',
-        (chat_id,)
-    )
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else None
-
-
-def set_chat_setting(chat_id, setting, value):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(
-        f'INSERT OR REPLACE INTO chat_settings (chat_id, {setting}) VALUES (?, ?)',
-        (chat_id, value)
-    )
-    conn.commit()
-    conn.close()
-
-
-# ============= КОМАНДЫ БОТА =============
+# Команды бота
 async def start(update: Update, context: CallbackContext):
     """Приветственное сообщение"""
-    # Проверяем, является ли пользователь админом
-    is_admin = update.effective_user.id in ADMIN_IDS
-    admin_status = "✅ (Админ бота)" if is_admin else "❌ (Не админ)"
-    
     await update.message.reply_text(
-        f"🌟 *Привет! Я Rubin Bot*\n\n"
-        f"Ваш статус: {admin_status}\n"
-        f"Ваш ID: `{update.effective_user.id}`\n\n"
+        "🌟 *Привет! Я Celestine Bot*\n\n"
         "Я помогаю модерировать чаты и защищать от спама.\n\n"
         "*Доступные команды:*\n"
         "/warn @user [причина] - Выдать предупреждение\n"
@@ -254,19 +124,8 @@ async def start(update: Update, context: CallbackContext):
         "/mute @user [минуты] - Замутить пользователя\n"
         "/unmute @user - Размутить\n"
         "/settings - Настройки бота\n"
-        "/stats - Статистика чата\n"
-        "/myid - Показать ваш ID\n\n"
+        "/stats - Статистика чата\n\n"
         "*Anti-flood:* автоматически предупреждает за частые сообщения",
-        parse_mode='Markdown'
-    )
-
-
-async def myid(update: Update, context: CallbackContext):
-    """Показать ID пользователя"""
-    await update.message.reply_text(
-        f"🆔 Ваш ID: `{update.effective_user.id}`\n"
-        f"Ваш username: @{update.effective_user.username if update.effective_user.username else 'Нет'}\n"
-        f"Ваше имя: {update.effective_user.first_name}",
         parse_mode='Markdown'
     )
 
@@ -275,36 +134,15 @@ async def myid(update: Update, context: CallbackContext):
 async def warn(update: Update, context: CallbackContext):
     """Выдать предупреждение пользователю"""
     if not context.args:
-        await update.message.reply_text(
-            "❌ Использование: /warn @user [причина]\n"
-            "Пример: /warn @username Спам"
-        )
+        await update.message.reply_text("❌ Использование: /warn @user [причина]")
         return
     
     try:
-        # Ищем пользователя
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(
-                f"❌ Пользователь {context.args[0]} не найден!\n"
-                "Убедитесь, что правильно указали @username или ID."
-            )
-            return
-        
-        user_id = target_user.id
-        
-        # Проверка на админа
-        try:
-            target_member = await context.bot.get_chat_member(
-                update.effective_chat.id,
-                user_id
-            )
-            if target_member.status in ['administrator', 'creator']:
-                await update.message.reply_text("❌ Нельзя выдать предупреждение администратору!")
-                return
-        except:
-            pass
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
+        user_id = target_user.user.id
         
         reason = " ".join(context.args[1:]) if len(context.args) > 1 else "Без причины"
         
@@ -316,11 +154,11 @@ async def warn(update: Update, context: CallbackContext):
         )
         
         await update.message.reply_text(
-            f"⚠️ Пользователь {target_user.first_name} получил предупреждение #{warning_count}\n"
+            f"⚠️ Пользователь {context.args[0]} получил предупреждение #{warning_count}\n"
             f"Причина: {reason}"
         )
         
-        # Отправляем предупреждение в ЛС
+        # Отправляем предупреждение в ЛС пользователю
         try:
             await context.bot.send_message(
                 user_id,
@@ -330,20 +168,16 @@ async def warn(update: Update, context: CallbackContext):
         except:
             pass
         
-        # Автоматический бан после N предупреждений
-        if warning_count >= WARNINGS_BEFORE_BAN:
+        # Автоматический бан после 3 предупреждений
+        if warning_count >= 3:
             await context.bot.ban_chat_member(update.effective_chat.id, user_id)
-            await update.message.reply_text(
-                f"🔨 {target_user.first_name} забанен за {WARNINGS_BEFORE_BAN} предупреждений!"
-            )
+            await update.message.reply_text(f"🔨 {context.args[0]} забанен за 3 предупреждения!")
             clear_warnings(user_id, update.effective_chat.id)
             
     except Exception as e:
-        logger.error(f"Ошибка в warn: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 
-@admin_only
 async def warnings(update: Update, context: CallbackContext):
     """Показать предупреждения пользователя"""
     if not context.args:
@@ -351,21 +185,19 @@ async def warnings(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        user_id = target_user.id
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
+        user_id = target_user.user.id
         
         warnings_list = get_warnings(user_id, update.effective_chat.id)
         
         if not warnings_list:
-            await update.message.reply_text(f"✅ У {target_user.first_name} нет предупреждений")
+            await update.message.reply_text(f"✅ У {context.args[0]} нет предупреждений")
             return
         
-        text = f"⚠️ Предупреждения для {target_user.first_name}:\n\n"
+        text = f"⚠️ Предупреждения для {context.args[0]}:\n\n"
         for i, (reason, date, warned_by) in enumerate(warnings_list, 1):
             text += f"{i}. Причина: {reason}\n   Дата: {date[:16]}\n\n"
         
@@ -383,16 +215,14 @@ async def clear_warns(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        user_id = target_user.id
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
+        user_id = target_user.user.id
         
         clear_warnings(user_id, update.effective_chat.id)
-        await update.message.reply_text(f"✅ Очищены все предупреждения для {target_user.first_name}")
+        await update.message.reply_text(f"✅ Очищены все предупреждения для {context.args[0]}")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -406,15 +236,13 @@ async def kick(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        await context.bot.ban_chat_member(update.effective_chat.id, target_user.id)
-        await context.bot.unban_chat_member(update.effective_chat.id, target_user.id)
-        await update.message.reply_text(f"👢 {target_user.first_name} был кикнут")
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
+        await context.bot.ban_chat_member(update.effective_chat.id, target_user.user.id)
+        await context.bot.unban_chat_member(update.effective_chat.id, target_user.user.id)
+        await update.message.reply_text(f"👢 {context.args[0]} был кикнут")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -428,29 +256,15 @@ async def ban(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        # Проверка на бана админа
-        try:
-            target_member = await context.bot.get_chat_member(
-                update.effective_chat.id,
-                target_user.id
-            )
-            if target_member.status in ['administrator', 'creator']:
-                await update.message.reply_text("❌ Нельзя забанить администратора!")
-                return
-        except:
-            pass
-        
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
         reason = " ".join(context.args[1:]) if len(context.args) > 1 else "Без причины"
         
-        await context.bot.ban_chat_member(update.effective_chat.id, target_user.id)
+        await context.bot.ban_chat_member(update.effective_chat.id, target_user.user.id)
         await update.message.reply_text(
-            f"🔨 {target_user.first_name} забанен\nПричина: {reason}"
+            f"🔨 {context.args[0]} забанен\nПричина: {reason}"
         )
         
     except Exception as e:
@@ -465,14 +279,12 @@ async def unban(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        await context.bot.unban_chat_member(update.effective_chat.id, target_user.id)
-        await update.message.reply_text(f"✅ {target_user.first_name} разбанен")
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
+        await context.bot.unban_chat_member(update.effective_chat.id, target_user.user.id)
+        await update.message.reply_text(f"✅ {context.args[0]} разбанен")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -486,24 +298,10 @@ async def mute(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
-        
-        # Проверка на мут админа
-        try:
-            target_member = await context.bot.get_chat_member(
-                update.effective_chat.id,
-                target_user.id
-            )
-            if target_member.status in ['administrator', 'creator']:
-                await update.message.reply_text("❌ Нельзя замутить администратора!")
-                return
-        except:
-            pass
-        
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
         minutes = int(context.args[1])
         reason = " ".join(context.args[2:]) if len(context.args) > 2 else "Без причины"
         
@@ -511,17 +309,15 @@ async def mute(update: Update, context: CallbackContext):
         
         await context.bot.restrict_chat_member(
             update.effective_chat.id,
-            target_user.id,
+            target_user.user.id,
             ChatPermissions(can_send_messages=False),
             until_date=until_date
         )
         
         await update.message.reply_text(
-            f"🔇 {target_user.first_name} замучен на {minutes} минут\nПричина: {reason}"
+            f"🔇 {context.args[0]} замучен на {minutes} минут\nПричина: {reason}"
         )
         
-    except ValueError:
-        await update.message.reply_text("❌ Введите корректное количество минут!")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
@@ -534,15 +330,14 @@ async def unmute(update: Update, context: CallbackContext):
         return
     
     try:
-        target_user = await get_user_from_text(update, context, context.args[0])
-        
-        if not target_user:
-            await update.message.reply_text(f"❌ Пользователь {context.args[0]} не найден!")
-            return
+        target_user = await context.bot.get_chat_member(
+            update.effective_chat.id,
+            context.args[0]
+        )
         
         await context.bot.restrict_chat_member(
             update.effective_chat.id,
-            target_user.id,
+            target_user.user.id,
             ChatPermissions(
                 can_send_messages=True,
                 can_send_media_messages=True,
@@ -552,7 +347,7 @@ async def unmute(update: Update, context: CallbackContext):
             )
         )
         
-        await update.message.reply_text(f"✅ {target_user.first_name} размучен")
+        await update.message.reply_text(f"✅ {context.args[0]} размучен")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -571,58 +366,11 @@ async def settings(update: Update, context: CallbackContext):
     )
 
 
-@admin_only
-async def set_welcome(update: Update, context: CallbackContext):
-    """Включить/выключить приветствия"""
-    if not context.args or context.args[0].lower() not in ['on', 'off']:
-        await update.message.reply_text("❌ Использование: /set_welcome on/off")
-        return
-    
-    value = 1 if context.args[0].lower() == 'on' else 0
-    set_chat_setting(update.effective_chat.id, 'welcome_enabled', value)
-    await update.message.reply_text(f"✅ Приветствия {'включены' if value else 'выключены'}")
-
-
-@admin_only
-async def set_antiflood(update: Update, context: CallbackContext):
-    """Включить/выключить антифлуд"""
-    if not context.args or context.args[0].lower() not in ['on', 'off']:
-        await update.message.reply_text("❌ Использование: /set_antiflood on/off")
-        return
-    
-    value = 1 if context.args[0].lower() == 'on' else 0
-    set_chat_setting(update.effective_chat.id, 'anti_flood_enabled', value)
-    await update.message.reply_text(f"✅ Антифлуд {'включен' if value else 'выключен'}")
-
-
-@admin_only
-async def set_flood(update: Update, context: CallbackContext):
-    """Установить настройки антифлуда"""
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ Использование: /set_flood [лимит] [время_в_секундах]")
-        return
-    
-    try:
-        limit = int(context.args[0])
-        time = int(context.args[1])
-        
-        if limit < 1 or time < 1:
-            await update.message.reply_text("❌ Значения должны быть больше 0")
-            return
-        
-        set_chat_setting(update.effective_chat.id, 'flood_limit', limit)
-        set_chat_setting(update.effective_chat.id, 'flood_time', time)
-        await update.message.reply_text(f"✅ Антифлуд настроен: {limit} сообщений за {time} секунд")
-        
-    except ValueError:
-        await update.message.reply_text("❌ Введите числа!")
-
-
 async def stats(update: Update, context: CallbackContext):
     """Статистика чата"""
     chat_member = await context.bot.get_chat_member(update.effective_chat.id, update.effective_user.id)
     
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('celestine_bot.db')
     cursor = conn.cursor()
     total_warnings = cursor.execute(
         'SELECT COUNT(*) FROM warnings WHERE chat_id = ?',
@@ -639,13 +387,9 @@ async def stats(update: Update, context: CallbackContext):
     )
 
 
-# ============= ОБРАБОТЧИКИ =============
+# Обработчик новых участников
 async def welcome_new_members(update: Update, context: CallbackContext):
     """Приветствие новых участников"""
-    welcome_enabled = get_chat_setting(update.effective_chat.id, 'welcome_enabled')
-    if welcome_enabled == 0:
-        return
-    
     for new_member in update.message.new_chat_members:
         if new_member.id == context.bot.id:
             continue
@@ -659,6 +403,7 @@ async def welcome_new_members(update: Update, context: CallbackContext):
         await update.message.reply_text(welcome_text)
 
 
+# Anti-flood система
 user_messages = {}
 
 async def anti_flood(update: Update, context: CallbackContext):
@@ -666,14 +411,11 @@ async def anti_flood(update: Update, context: CallbackContext):
     if not update.message or not update.effective_user:
         return
     
-    anti_flood_enabled = get_chat_setting(update.effective_chat.id, 'anti_flood_enabled')
-    if anti_flood_enabled == 0:
-        return
-    
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     current_time = datetime.now()
     
+    # Проверяем, не админ ли пользователь
     try:
         chat_member = await context.bot.get_chat_member(chat_id, user_id)
         if chat_member.status in ['administrator', 'creator']:
@@ -681,20 +423,19 @@ async def anti_flood(update: Update, context: CallbackContext):
     except:
         pass
     
-    flood_limit = get_chat_setting(chat_id, 'flood_limit') or FLOOD_LIMIT
-    flood_time = get_chat_setting(chat_id, 'flood_time') or FLOOD_TIME
-    
     if user_id not in user_messages:
         user_messages[user_id] = []
     
+    # Очищаем старые сообщения (старше 10 секунд)
     user_messages[user_id] = [
         msg_time for msg_time in user_messages[user_id]
-        if (current_time - msg_time).seconds < flood_time
+        if (current_time - msg_time).seconds < 10
     ]
     
     user_messages[user_id].append(current_time)
     
-    if len(user_messages[user_id]) > flood_limit:
+    # Если больше 5 сообщений за 10 секунд - предупреждение
+    if len(user_messages[user_id]) > 5:
         warning_count = add_warning(
             user_id,
             chat_id,
@@ -708,21 +449,22 @@ async def anti_flood(update: Update, context: CallbackContext):
             f"Предупреждение #{warning_count}"
         )
         
-        if warning_count >= WARNINGS_BEFORE_BAN:
+        # Бан за 3 предупреждения от антифлуда
+        if warning_count >= 3:
             await context.bot.ban_chat_member(chat_id, user_id)
             await update.message.reply_text(f"🔨 {update.effective_user.first_name} забанен за флуд!")
 
 
-# ============= ЗАПУСК БОТА =============
 def main():
     """Запуск бота"""
+    # Инициализируем БД
     init_db()
     
+    # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Регистрируем команды
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("myid", myid))  # Новая команда
     application.add_handler(CommandHandler("warn", warn))
     application.add_handler(CommandHandler("warnings", warnings))
     application.add_handler(CommandHandler("clearwarns", clear_warns))
@@ -732,9 +474,6 @@ def main():
     application.add_handler(CommandHandler("mute", mute))
     application.add_handler(CommandHandler("unmute", unmute))
     application.add_handler(CommandHandler("settings", settings))
-    application.add_handler(CommandHandler("set_welcome", set_welcome))
-    application.add_handler(CommandHandler("set_antiflood", set_antiflood))
-    application.add_handler(CommandHandler("set_flood", set_flood))
     application.add_handler(CommandHandler("stats", stats))
     
     # Регистрируем обработчики сообщений
@@ -747,9 +486,8 @@ def main():
         anti_flood
     ))
     
-    print("🤖 Бот Rubin запущен!")
-    print(f"👤 Админы бота: {ADMIN_IDS}")
-    print("📝 Используйте /myid чтобы узнать свой ID")
+    # Запускаем бота
+    print("🤖 Бот Celestine запущен!")
     application.run_polling()
 
 
